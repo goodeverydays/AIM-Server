@@ -1,0 +1,21 @@
+# 本地配置（含密钥，禁止提交）
+.env
+**/.env
+
+# 编译产物
+build/
+out/
+*.exe
+*.o
+*.obj
+
+# IDE / 系统
+.idea/
+.vscode/
+.vs/
+.cache/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

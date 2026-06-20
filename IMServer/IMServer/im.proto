@@ -1,0 +1,375 @@
+// IM服务器通信协议定义
+// 使用protobuf3语法，提供强类型、紧凑编码、前后兼容的消息格式
+syntax = "proto3";
+
+package im;
+
+// 服务端使用完整 protobuf 库，不指定 LITE_RUNTIME
+// （客户端才需要 LITE_RUNTIME 以匹配 libprotobuf-lite）
+
+// ============================================================
+// 统一消息容器 —— 所有IM消息的外层封装
+// 替换原有二进制协议中的 [cmd:4B][seq:4B][data:varint+bytes]
+// ============================================================
+message MessageContainer {
+    // 消息类型，对应原有 ClientSession.h 中的枚举值
+    // 1000=心跳, 1001=注册, 1002=登录, 1003=好友列表, 1004=查找用户
+    // 1005=操作好友, 1006=用户状态变更, 1007=更新用户信息, 1008=修改密码
+    // 1011=聊天历史, 1100=单聊, 1101=群发
+    int32 cmd        = 1;
+
+    // 消息序号，用于请求/响应匹配
+    int32 seq        = 2;
+
+    // 单聊目标用户ID或群ID (仅聊天消息使用)
+    int32 target_id  = 3;
+
+    // 群发目标列表，JSON数组字符串 (仅群发消息使用)
+    string targets   = 4;
+
+    // 具体业务消息载荷
+    // 根据cmd类型选择对应的子消息进行序列化/反序列化
+    // cmd=1000 → 空 (心跳无需载荷)
+    // cmd=1001 → RegisterReq / RegisterRsp
+    // cmd=1002 → LoginReq / LoginRsp
+    // cmd=1003 → FriendListRsp
+    // cmd=1004 → FindUserReq / FindUserRsp
+    // cmd=1005 → OperateFriendReq / OperateFriendRsp
+    // cmd=1006 → UserStatusChangeNotify
+    // cmd=1007 → UpdateUserInfoReq / CommonRsp
+    // cmd=1008 → ModifyPasswordReq / CommonRsp
+    // cmd=1009 → CreateGroupReq / CreateGroupRsp
+    // cmd=1010 → GetGroupMembersReq / GetGroupMembersRsp
+    // cmd=1013 → SendEmailCodeReq / SendEmailCodeRsp
+    // cmd=1100 → ChatMsg
+    // cmd=1101 → MultiChatTargets
+    bytes payload   = 5;
+}
+
+// ============================================================
+// 通用响应 —— 所有无特殊返回数据的操作使用此消息
+// ============================================================
+message CommonRsp {
+    int32 code = 1;     // 0=成功, >0=错误码
+    string msg = 2;     // 提示信息
+}
+
+// ============================================================
+// 用户信息 —— 所有用户数据传递的统一结构
+// ============================================================
+message UserInfo {
+    int32  userid      = 1;
+    string username    = 2;
+    string nickname    = 3;
+    int32  facetype    = 4;
+    string customface  = 5;
+    int32  gender      = 6;
+    int32  birthday    = 7;
+    string signature   = 8;
+    string address     = 9;
+    string phonenumber = 10;
+    string mail        = 11;
+    int32  status      = 12;   // 0=离线, 1=在线
+    int32  clienttype  = 13;   // 客户端类型(好友列表中使用)
+    int32  ownerid     = 14;   // 群主ID(仅群条目有效，用于客户端判断群主身份)
+    int32  grouprole   = 15;   // 群内角色(仅群成员列表有效): 0=普通成员, 1=管理员, 2=群主
+}
+
+// ============================================================
+// 注册 (cmd=1001)
+// ============================================================
+message RegisterReq {
+    string username = 1;   // 手机号
+    string nickname = 2;   // 昵称
+    string password = 3;   // 密码
+    string email    = 4;   // 邮箱（需通过验证码校验）
+    string code     = 5;   // 邮箱验证码
+}
+
+message RegisterRsp {
+    int32 code    = 1;
+    string msg    = 2;
+}
+
+// ============================================================
+// 发送邮箱验证码 (cmd=1013)
+// ============================================================
+message SendEmailCodeReq {
+    string email = 1;
+}
+
+message SendEmailCodeRsp {
+    int32  code             = 1;   // 0=成功, 1=冷却中, 2=邮箱格式错误, 3=发送失败
+    string msg              = 2;
+    int32  cooldown_seconds = 3;   // 距下次可发送的剩余秒数（仅 code=1 时有意义）
+}
+
+// VIP 升级 (cmd=1014) —— IMServer 经 gRPC 转发至 goagent
+message UpgradeVipReq {
+    int32  userid        = 1;
+    string payment_token = 2;   // 支付凭证（当前为模拟令牌）
+    int32  amount_cents  = 3;   // 金额（分），VIP=500
+}
+
+message UpgradeVipRsp {
+    int32  code   = 1;   // 0=成功
+    string msg    = 2;
+    bool   is_vip = 3;
+}
+
+// ============================================================
+// 登录 (cmd=1002)
+// ============================================================
+message LoginReq {
+    string username   = 1;
+    string password   = 2;
+    int32  clienttype = 3;
+    int32  status     = 4;
+}
+
+message LoginRsp {
+    int32    code    = 1;
+    string   msg     = 2;
+    UserInfo user    = 3;    // 登录成功时返回用户完整信息
+    bool     is_vip  = 4;    // 登录时一并返回 VIP 状态，避免重登后客户端丢失会员身份
+}
+
+// ============================================================
+// 获取好友列表 (cmd=1003)
+// ============================================================
+message FriendListRsp {
+    int32              code  = 1;
+    string             msg   = 2;
+    repeated UserInfo  friends = 3;   // 好友列表
+}
+
+// ============================================================
+// 查找用户 (cmd=1004)
+// ============================================================
+message FindUserReq {
+    string type    = 1;    // "username" 或 "userid"
+    string keyword = 2;    // 查找关键词
+}
+
+message FindUserRsp {
+    int32    code = 1;
+    string   msg  = 2;
+    UserInfo user = 3;    // 查找到的用户信息
+}
+
+// ============================================================
+// 操作好友 (cmd=1005)
+// type=1: 添加好友, type=2: 删除好友, type=3: 邀请入群
+// ============================================================
+message OperateFriendReq {
+    int32 type     = 1;    // 1=添加, 2=删除
+    int32 friendid = 2;
+}
+
+message OperateFriendRsp {
+    int32  code = 1;
+    string msg  = 2;
+}
+
+// ============================================================
+// 好友/入群 请求-审批
+// cmd=1015 发起请求 / 1016 拉取待处理 / 1017 处理(接受/拒绝) / 1018 推送新请求(S->C)
+// ============================================================
+message FriendRequest {
+    int64  reqid     = 1;    // 请求ID
+    int32  fromid    = 2;    // 发起者ID
+    string fromname  = 3;    // 发起者昵称(展示)
+    string fromface  = 4;    // 发起者头像URL
+    int32  toid      = 5;    // 接收者ID
+    int32  reqtype   = 6;    // 1=好友请求, 2=入群邀请(群主→被邀者), 3=申请入群(申请者→群主)
+    int32  groupid   = 7;    // reqtype=2/3 时的群ID
+    string groupname = 8;    // reqtype=2/3 时的群名
+    int64  timestamp = 9;
+    string message   = 10;   // 验证留言(可选)
+}
+
+message SendRequestReq {
+    int32  reqtype  = 1;    // 1=好友, 2=入群邀请, 3=申请入群
+    int32  targetid = 2;    // 好友:对方用户ID; 入群邀请:被邀请者用户ID; 申请入群:可留空(由群ID推群主)
+    int32  groupid  = 3;    // reqtype=2/3 时的群ID
+    string message  = 4;
+}
+message SendRequestRsp { int32 code = 1; string msg = 2; }
+
+message PendingRequestsReq {}
+message PendingRequestsRsp {
+    int32                   code     = 1;
+    string                  msg      = 2;
+    repeated FriendRequest  requests = 3;
+}
+
+message HandleRequestReq {
+    int64 reqid  = 1;
+    int32 action = 2;    // 1=接受, 2=拒绝
+}
+message HandleRequestRsp { int32 code = 1; string msg = 2; }
+
+// ============================================================
+// 用户状态变更通知 (cmd=1006)
+// 由服务端推送给好友，无需请求
+// ============================================================
+message UserStatusChangeNotify {
+    int32  type       = 1;    // 1=上线, 0=离线, 3=被删除好友, 4=被添加好友, 5=头像更新
+    int32  userid     = 2;
+    string customface = 3;    // 仅 type=5 时携带新的头像URL
+}
+
+// ============================================================
+// 更新用户信息 (cmd=1007)
+// ============================================================
+message UpdateUserInfoReq {
+    string nickname    = 1;
+    int32  facetype    = 2;
+    string customface  = 3;
+    int32  gender      = 4;
+    int32  birthday    = 5;
+    string signature   = 6;
+    string address     = 7;
+    string phonenumber = 8;
+    string mail        = 9;
+}
+
+// ============================================================
+// 修改密码 (cmd=1008)
+// ============================================================
+message ModifyPasswordReq {
+    string oldpassword = 1;
+    string newpassword = 2;
+}
+
+// ============================================================
+// 创建群组 (cmd=1009)
+// ============================================================
+message CreateGroupReq {
+    string groupname = 1;
+}
+
+message CreateGroupRsp {
+    int32  code      = 1;
+    string msg       = 2;
+    int32  groupid   = 3;
+    string groupname = 4;
+}
+
+// ============================================================
+// 获取群成员 (cmd=1010)
+// ============================================================
+message GetGroupMembersReq {
+    int32 groupid = 1;
+}
+
+message GetGroupMembersRsp {
+    int32             code    = 1;
+    string            msg     = 2;
+    repeated UserInfo members = 3;   // 群成员列表
+}
+
+// ============================================================
+// 群设置：踢出成员 (cmd=1019) —— 仅群主可操作
+// ============================================================
+message KickGroupMemberReq {
+    int32 groupid  = 1;
+    int32 memberid = 2;
+}
+message KickGroupMemberRsp {
+    int32  code     = 1;
+    string msg      = 2;
+    int32  groupid  = 3;
+    int32  memberid = 4;
+}
+
+// ============================================================
+// 群设置：重命名群 (cmd=1020) —— 仅群主可操作
+// ============================================================
+message RenameGroupReq {
+    int32  groupid = 1;
+    string newname = 2;
+}
+message RenameGroupRsp {
+    int32  code    = 1;
+    string msg     = 2;
+    int32  groupid = 3;
+    string newname = 4;
+}
+
+// ============================================================
+// 群设置：设置/取消管理员 (cmd=1021) —— 仅群主可操作
+// ============================================================
+message SetGroupAdminReq {
+    int32 groupid  = 1;
+    int32 memberid = 2;
+    bool  is_admin = 3;   // true=设为管理员, false=取消管理员
+}
+message SetGroupAdminRsp {
+    int32  code     = 1;
+    string msg      = 2;
+    int32  groupid  = 3;
+    int32  memberid = 4;
+    bool   is_admin = 5;
+}
+
+// ============================================================
+// 聊天消息 (cmd=1100 单聊, cmd=1101 群发)
+// ============================================================
+message ChatMsg {
+    int32  senderid  = 1;    // 发送者ID
+    int32  targetid  = 2;    // 接收者ID (单聊) 或 群ID (群聊)
+    string content   = 3;    // 消息内容
+    int64  timestamp = 4;    // 消息时间戳
+
+    // ── Agent 技能（仅当 targetid=-1 发往 AI 助手时使用）──
+    // skill 为空=普通对话；"summarize"/"suggest_reply" 等触发对应技能。
+    // context 携带技能所需上下文（如待总结的会话历史），IMServer 透传给 goagent。
+    string skill            = 5;
+    repeated string context = 6;
+
+    // ── 媒体消息(语音/视频/图片/文件)──
+    int32  msg_type  = 7;    // 0=文本(默认) 1=语音 2=视频 3=图片 4=文件
+    string media_url = 8;    // 媒体文件URL(非文本时)
+    int32  duration  = 9;    // 语音/视频时长(秒)
+    int64  file_size = 10;   // 文件字节数
+    string thumb_url = 11;   // 视频缩略图URL(可选)
+    string file_name = 12;   // 原始文件名(文件类型)
+}
+
+// 群发消息的目标列表 (cmd=1101 的 payload)
+message MultiChatTargets {
+    repeated int32 targets = 1;   // 群发目标用户ID列表
+    string         content = 2;   // 消息内容
+}
+
+// ============================================================
+// 获取聊天历史 (cmd=1011)
+// ============================================================
+// 上传头像 (cmd=1012)
+// ============================================================
+message AvatarUploadReq {
+    bytes  image_data = 1;   // 图片二进制数据
+    string format     = 2;   // "png" / "jpg" / "gif" / "webp"
+    int32  target_id  = 3;   // 0=本人头像; 群ID(>=0xFFFFFFF)=更换群头像(需群主/管理员)
+}
+
+message AvatarUploadRsp {
+    int32  code     = 1;
+    string msg      = 2;
+    string url      = 3;     // 头像访问URL
+}
+
+// ============================================================
+// 获取聊天历史 (cmd=1011)
+// ============================================================
+message ChatHistoryReq {
+    int32 targetid = 1;   // 对方用户ID（单聊）或群ID（群聊）
+}
+
+message ChatHistoryRsp {
+    int32              code     = 1;
+    string             msg      = 2;
+    int32              targetid = 3;
+    repeated ChatMsg   messages = 4;
+}

@@ -1,0 +1,61 @@
+// GoImageServer — 头像微服务 gRPC 协议
+// 业务操作（上传/删除/查询）走 gRPC+Protobuf
+// 图片获取走 HTTP 静态文件服务（QML Image 组件需要 URL）
+syntax = "proto3";
+
+package avatar;
+option go_package = "GoImageServer/pkg/pb";
+
+service AvatarService {
+    // 上传头像 → 校验/缩放/存储 → 返回访问URL
+    rpc Upload (UploadReq) returns (UploadRsp);
+
+    // 删除头像
+    rpc Delete (DeleteReq) returns (CommonRsp);
+
+    // 查询头像URL
+    rpc GetUrl (GetUrlReq) returns (GetUrlRsp);
+
+    // 健康检查
+    rpc HealthCheck (HealthCheckReq) returns (HealthCheckRsp);
+}
+
+message CommonRsp {
+    int32  code = 1;
+    string msg  = 2;
+}
+
+message UploadReq {
+    int32  user_id   = 1;
+    bytes  image_data = 2;
+    string format     = 3;    // "png" / "jpg" / "gif" / "webp"
+}
+
+message UploadRsp {
+    int32  code     = 1;
+    string msg      = 2;
+    string filename = 3;     // 服务器上存储的文件名
+    string url      = 4;     // 完整访问URL (http://IP:8080/avatars/xxx.png)
+}
+
+message DeleteReq {
+    int32 user_id = 1;
+}
+
+message GetUrlReq {
+    int32 user_id = 1;
+}
+
+message GetUrlRsp {
+    int32  code     = 1;
+    string msg      = 2;
+    string filename = 3;
+    string url      = 4;
+}
+
+message HealthCheckReq {}
+
+message HealthCheckRsp {
+    bool   healthy = 1;
+    string version = 2;
+}
