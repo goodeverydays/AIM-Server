@@ -1,0 +1,154 @@
+# IMChat 全栈编排(阿里云 ECS,单机)
+# 用 host 网络:各服务沿用代码里的 127.0.0.1 互联,零代码改动。
+# 期望目录布局(与本文件同级):
+#   ./IMServer/IMServer/   ./goagent/   ./GoImageServer/   ./GoMediaServer/   ./GoMailServer/   ./GoChatPersister/
+# 启动: docker compose up -d --build
+name: imchat
+
+services:
+  # ---------- 中间件 ----------
+  mysql:
+    image: mysql:8.0
+    network_mode: host
+    command: ["--bind-address=127.0.0.1", "--character-set-server=utf8mb4"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DB}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    network_mode: host
+    command: ["redis-server", "--bind", "127.0.0.1", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    network_mode: host
+    environment:
+      QDRANT__SERVICE__HOST: 127.0.0.1   # 仅本机可达,不暴露公网
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    network_mode: host
+    environment:
+      RABBITMQ_NODE_IP_ADDRESS: 127.0.0.1   # 仅本机监听 5672/15672(guest 仅限本机),不暴露公网
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+
+  # ---------- Go 微服务 ----------
+  goagent:
+    build: ./goagent
+    network_mode: host
+    environment:
+      LLM_PROVIDER: openai
+      OPENAI_API_KEY: ${DEEPSEEK_API_KEY}
+      OPENAI_BASE_URL: https://api.deepseek.com/v1
+      OPENAI_MODEL: deepseek-chat
+      REDIS_ADDR: 127.0.0.1:6379
+      RAG_ENABLED: "1"
+      RAG_VECTOR_BACKEND: qdrant
+      QDRANT_URL: http://127.0.0.1:6333
+      RAG_MYSQL_DSN: "root:${MYSQL_PASSWORD}@tcp(127.0.0.1:3306)/${MYSQL_DB}?charset=utf8mb4&parseTime=true"
+      EMBED_API_KEY: ${EMBED_API_KEY}
+      EMBED_BASE_URL: ${EMBED_BASE_URL}
+      EMBED_MODEL: ${EMBED_MODEL}
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_started }
+      qdrant: { condition: service_started }
+    restart: unless-stopped
+
+  avatarserver:
+    build: ./GoImageServer
+    network_mode: host
+    environment:
+      AVATAR_PUBLIC_HOST: ${PUBLIC_HOST}   # 客户端可访问的公网IP/域名
+      AVATAR_DIR: /data/avatars
+    volumes:
+      - avatar_data:/data/avatars
+    restart: unless-stopped
+
+  mediaserver:
+    build: ./GoMediaServer
+    network_mode: host
+    environment:
+      MEDIA_PUBLIC_HOST: ${PUBLIC_HOST}
+      MEDIA_DIR: /data/media
+      MEDIA_MAX_SIZE_MB: "100"
+    volumes:
+      - media_data:/data/media
+    restart: unless-stopped
+
+  mailserver:
+    build: ./GoMailServer
+    network_mode: host
+    environment:
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+    restart: unless-stopped
+
+  # 聊天消息异步落库消费者:从 RabbitMQ 取消息写入 t_chatmsg(把 DB 写从 IMServer 热路径剥离)
+  chatpersister:
+    build: ./GoChatPersister
+    network_mode: host
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
+      RABBITMQ_EXCHANGE: im.events
+      RABBITMQ_QUEUE: im.chat.persist
+      RABBITMQ_ROUTING_KEY: chat
+      MYSQL_DSN: "root:${MYSQL_PASSWORD}@tcp(127.0.0.1:3306)/${MYSQL_DB}?charset=utf8mb4&parseTime=true"
+    depends_on:
+      mysql: { condition: service_healthy }
+      rabbitmq: { condition: service_started }
+    restart: unless-stopped
+
+  # ---------- IM 核心(C++/muduo) ----------
+  imserver:
+    build:
+      context: ./IMServer/IMServer
+    network_mode: host
+    environment:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DB: ${MYSQL_DB}
+      # 性能调优:IO 线程数(多 Reactor)与 MySQL 连接池大小。
+      # User 字段竞争已修复(读返回快照副本+写在锁内),多线程已安全,默认 4。
+      IMSERVER_THREADS: "4"
+      MYSQL_POOL_SIZE: "8"
+      # 聊天消息持久化改走 RabbitMQ(由 chatpersister 异步落库);发布失败自动回退同步写库
+      RABBITMQ_ENABLED: "1"
+      RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
+      RABBITMQ_EXCHANGE: im.events
+    depends_on:
+      mysql: { condition: service_healthy }
+      rabbitmq: { condition: service_started }
+      goagent: { condition: service_started }
+      avatarserver: { condition: service_started }
+      mailserver: { condition: service_started }
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  qdrant_data:
+  rabbitmq_data:
+  avatar_data:
+  media_data:

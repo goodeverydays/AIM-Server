@@ -1,0 +1,7 @@
+build/
+out/
+*.o
+*.obj
+.git/
+.vs/
+.vscode/

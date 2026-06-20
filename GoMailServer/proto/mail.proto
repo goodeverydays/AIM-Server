@@ -1,0 +1,44 @@
+// GoMailServer — 邮箱验证码微服务 gRPC 协议
+// 业务操作（发送验证码/校验验证码）走 gRPC+Protobuf
+syntax = "proto3";
+
+package mail;
+option go_package = "GoMailServer/pkg/pb";
+
+service MailService {
+    // 发送邮箱验证码 → 生成验证码 → SMTP发信 → 返回结果
+    rpc SendCode (SendCodeReq) returns (SendCodeRsp);
+
+    // 校验邮箱验证码（一次性，校验成功后立即失效）
+    rpc VerifyCode (VerifyCodeReq) returns (VerifyCodeRsp);
+
+    // 健康检查
+    rpc HealthCheck (HealthCheckReq) returns (HealthCheckRsp);
+}
+
+message SendCodeReq {
+    string email = 1;
+}
+
+message SendCodeRsp {
+    int32  code             = 1;   // 0=成功, 1=冷却中, 2=邮箱格式错误, 3=发送失败
+    string msg              = 2;
+    int32  cooldown_seconds = 3;   // 距下次可发送的剩余秒数（仅 code=1 时有意义）
+}
+
+message VerifyCodeReq {
+    string email = 1;
+    string code  = 2;
+}
+
+message VerifyCodeRsp {
+    int32  code = 1;   // 0=成功, 1=验证码错误或已过期
+    string msg  = 2;
+}
+
+message HealthCheckReq {}
+
+message HealthCheckRsp {
+    bool   healthy = 1;
+    string version = 2;
+}

@@ -1,0 +1,17 @@
+# Qdrant 向量数据库 —— 供 goagent RAG(记忆问答)使用
+# 启动:  docker compose up -d qdrant
+# 控制台: http://localhost:6333/dashboard
+# 数据持久化在命名卷 qdrant_data，容器重建不丢索引。
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: im-qdrant
+    ports:
+      - "6333:6333"   # REST API(goagent 通过它读写)
+      - "6334:6334"   # gRPC(可选)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:

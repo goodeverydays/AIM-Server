@@ -1,0 +1,97 @@
+// goagent AgentService gRPC协议定义
+// 为IM系统提供智能Agent能力
+syntax = "proto3";
+
+package agent;
+option go_package = "goagent/pkg/pb";
+
+// ============================================================
+// AgentService — IM Agent的gRPC服务接口
+// IMServer作为客户端，将用户消息转发给Agent处理
+// Agent返回生成的回复，IMServer负责投递回IM会话
+// ============================================================
+service AgentService {
+    // 处理消息 — IMServer转发用户消息到Agent，获取AI回复
+    rpc ProcessMessage (ProcessMessageReq) returns (ProcessMessageRsp);
+
+    // 健康检查 — 检测Agent服务及下游LLM Provider是否可用
+    rpc HealthCheck (HealthCheckReq) returns (HealthCheckRsp);
+
+    // 获取模型列表 — 返回当前Provider支持的模型
+    rpc ListModels (ListModelsReq) returns (ListModelsRsp);
+
+    // 升级 VIP — 校验支付后将用户标记为 VIP（享更高 AI 配额）
+    rpc UpgradeVip (UpgradeVipReq) returns (VipStatusRsp);
+
+    // 查询 VIP 状态
+    rpc GetVipStatus (VipStatusReq) returns (VipStatusRsp);
+}
+
+// ============================================================
+// 消息处理
+// ============================================================
+message ProcessMessageReq {
+    int32  user_id    = 1;   // 发送者用户ID
+    int32  target_id  = 2;   // 目标ID（单聊时为对方用户ID，群聊时为群ID）
+    string content    = 3;   // 消息文本内容（用户输入给Agent的指令）
+    int32  chat_type  = 4;   // 聊天类型：1=单聊, 2=群聊
+    int64  timestamp  = 5;   // 消息时间戳（毫秒）
+    string model      = 6;   // 可选：指定使用的模型名称，为空则使用默认模型
+
+    // ── 技能分发（与 goagent 保持一致）──
+    // skill 为空=普通对话；"summarize"/"suggest_reply" 等触发对应技能。
+    // context 携带技能所需上下文（如待总结的会话历史），由客户端经 IMServer 透传。
+    string skill            = 7;
+    repeated string context = 8;
+}
+
+message ProcessMessageRsp {
+    int32  code       = 1;   // 0=成功, 非0=错误
+    string msg        = 2;   // 提示信息（成功或错误描述）
+    string reply      = 3;   // Agent生成的回复内容
+    string model      = 4;   // 实际使用的模型名称
+}
+
+// ============================================================
+// 健康检查
+// ============================================================
+message HealthCheckReq {}
+
+message HealthCheckRsp {
+    bool   healthy    = 1;   // 整体是否健康（服务自身正常 + LLM可用）
+    string version    = 2;   // 服务版本号
+    string llm_status = 3;   // LLM Provider状态: "active" / "empty" / "error"
+}
+
+// ============================================================
+// 模型列表
+// ============================================================
+message ListModelsReq {}
+
+message ListModelsRsp {
+    message ModelInfo {
+        string name       = 1;   // 模型名称，如 "gpt-4o", "claude-opus-4-8"
+        string provider   = 2;   // 所属Provider，如 "openai", "anthropic"
+        int32  max_tokens = 3;   // 最大输出token数
+    }
+    repeated ModelInfo models = 1;   // 可用模型列表
+}
+
+// ============================================================
+// VIP 升级 / 状态
+// ============================================================
+message UpgradeVipReq {
+    int32  user_id       = 1;   // 待升级用户ID
+    string payment_token = 2;   // 支付凭证（真实支付网关返回；当前为模拟令牌）
+    int32  amount_cents  = 3;   // 支付金额（分），VIP 为 500（$5）
+}
+
+message VipStatusReq {
+    int32 user_id = 1;
+}
+
+message VipStatusRsp {
+    int32  code   = 1;   // 0=成功, 非0=失败
+    string msg    = 2;   // 提示信息
+    bool   is_vip = 3;   // 当前是否为 VIP
+}
