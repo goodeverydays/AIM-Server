@@ -64,7 +64,7 @@
 | **微服务** | Go 1.25、gRPC、net/http、`log/slog`、依赖注入 |
 | **AI / RAG** | LLM（OpenAI 兼容，DeepSeek）、Embedding（bge-m3）、Qdrant 向量库 |
 | **中间件** | MySQL 8、Redis 7、RabbitMQ 3、Qdrant |
-| **客户端** | Qt 6 / QML（详见独立的 IMClient 仓库） |
+| **客户端** | Qt 6 / QML |
 | **运维** | Docker、Docker Compose、阿里云 ECS / 轻量应用服务器 |
 
 ## 📦 功能清单
@@ -118,7 +118,6 @@ docker compose logs imserver | grep "IO threads"   # IMServer 多线程就绪
 AIM-Chat/
 ├── docker-compose.yml          # 全栈编排（6 服务 + 4 中间件）
 ├── .env.example                # 配置模板（复制为 .env 填真实值）
-├── BACKEND_GUIDE.md            # ★后端源码阅读指南 + 面试题
 ├── IMServer/IMServer/          # C++ 核心（muduo + protobuf）
 ├── goagent/                    # AI 微服务（gRPC+HTTP / RAG / 缓存 / 限流）
 ├── GoImageServer/              # 头像服务
